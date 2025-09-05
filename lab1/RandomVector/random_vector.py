@@ -73,7 +73,7 @@ class RandomVector:
             if bin_count > max_bin:
                 max_bin = bin_count
 
-        # generate histogram 
+        # generate histogram
         current_bin_count = max_bin
         while current_bin_count > 0:
             for bin_count in bin_counts:
