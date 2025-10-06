@@ -70,31 +70,41 @@ class CrazyflieMPC(rclpy.node.Node):
 
         ############################################################################################################
         # [TODO] PART 1: Add ROS2 subscriber for the Crazyflie state data, and publishers for the control command and MPC trajectory solution
-
+        
         # (a) Position subscriber
+        self.position_sub = self.create_subscription(
+            PoseStamped,
+            f'{prefix}/pose',
+            self._pose_msg_callback,
+            10)
         # topic type -> PoseStamped
         # topic name -> {prefix}/pose (e.g., '/cf_1/pose')
         # callback -> self._pose_msg_callback
 
         # (b) Velocity subscriber
+        self.velocity_sub = self.create_subscription(
+            TwistStamped,
+            f'{prefix}/twist',
+            self._twist_msg_callback,
+            10)
         # topic type -> TwistStamped
         # topic name -> {prefix}/twist
         # callback -> self._twist_msg_callback
 
         # (c) MPC solution path publisher
+        self.mpc_solution_path_pub = self.create_publisher(Path,
+                                                          f'{prefix}/mpc_solution_path')
         # topic type -> Path
         # topic name -> {prefix}/mpc_solution_path
         # publisher variable -> self.mpc_solution_path_pub
 
         # (d) Attitude setpoint command publisher
+        self.attitude_setpoint_pub = self.create_publisher(AttitudeSetpoint,
+                                                          f'{prefix}/cmd_attitude_setpoint')
         # topic type -> AttitudeSetpoint
         # topic name -> {prefix}/cmd_attitude_setpoint
         # publisher variable -> self.attitude_setpoint_pub
 
-
-
-        
-        
         self.takeoffService = self.create_subscription(Empty, f'/all/mpc_takeoff', self.takeoff, 10)
         self.landService = self.create_subscription(Empty, f'/all/mpc_land', self.land, 10)
         self.trajectoryService = self.create_subscription(Empty, f'/all/mpc_trajectory', self.start_trajectory, 10)
@@ -102,12 +112,11 @@ class CrazyflieMPC(rclpy.node.Node):
         self.teleopService = self.create_subscription(Empty, f'/all/mpc_teleop', self.teleop, 10)
 
 
-
         # [TODO] PART 2: Add ROS2 timers for the main control loop (callback -> self._main_loop) and 
         #                the MPC solver loop (self._mpc_solver_loop). This is part of __init__().
         # Hint: Keep in mind that the variable self.rate is the control update rate specified in Hz
-        
-
+        self.main_timer = self.create_timer(1.0/self.rate, self._main_loop)
+        self.mpc_timer = self.create_timer(1.0/self.rate, self._mpc_solver_loop)
 
     # Be careful about indentation, this is outside __init()__
     #
@@ -121,13 +130,23 @@ class CrazyflieMPC(rclpy.node.Node):
     #   1. Look the PoseStamped (and similarly others) message structure at https://docs.ros2.org/foxy/api/geometry_msgs/msg/PoseStamped.html.
     #   2. You can use tf_transformations for the conversion into different orientation representations. 
     #   3. Be sure to wrap the attitude angles between -pi to +pi. 
-
-    # def _pose_msg_callback(self, msg: PoseStamped):
-    #   self.position = ...
-    #   self.attitude = ...
     
-    # def _twist_msg_callback(self, msg: TwistStamped):
-    #   self.velocity = ...
+    def _pose_msg_callback(self, msg: PoseStamped):
+        self.position = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
+        angles = tf_transformations.euler_from_quaternion([msg.pose.orientation.x,
+                                                                msg.pose.orientation.y,
+                                                                msg.pose.orientation.z,
+                                                                msg.pose.orientation.w])
+        # wrap angles
+        for i, angle in enumerate(angles):
+            angles[i] = np.arctan2(np.sin(angle), np.cos(angle))
+        self.attitude = list(angles)
+
+    
+    def _twist_msg_callback(self, msg: TwistStamped):
+      self.velocity = [msg.twist.linear.x,
+                       msg.twist.linear.y,
+                       msg.twist.linear.z]
 
 
     def start_trajectory(self, msg):
@@ -169,14 +188,18 @@ class CrazyflieMPC(rclpy.node.Node):
     # - Return these values in the output array as [pxr, pyr, pzr, vxr, vyr, vzr, 0., 0., 0.]
     # - The last three values (zeros) are the euler angles (attitude references)
 
-    # def trajectory_function(self, t):
-    #     if self.trajectory_type == 'horizontal_circle':  
-    #       pxr = 
-    #       pyr = 
-    #       ...
-    #       vzr = 
+    def trajectory_function(self, t):
+        if self.trajectory_type == 'horizontal_circle':  
+            a = 1.0                                                                 # radius of the circle
+            omega = 0.2                                                             # angular velocity (rad/s)
+            pxr = self.trajectory_start_position[0] + a * np.cos(omega * t) - a
+            pyr = self.trajectory_start_position[1] + a * np.sin(omega * t)
+            pzr = self.trajectory_start_position[2]
+            vxr = -a * omega * np.sin(omega * t)
+            vyr = a * omega * np.cos(omega * t)
+            vzr = 0.0
 
-    #     return np.array([pxr,pyr,pzr,vxr,vyr,vzr,0.,0.,0.])
+        return np.array([pxr,pyr,pzr,vxr,vyr,vzr,0.,0.,0.])
 
 
     def navigator(self, t):
@@ -204,7 +227,19 @@ class CrazyflieMPC(rclpy.node.Node):
     # - See the structure of the message in 
     #       ae740_crazyflie_sim/ros2_ws/src/crazyswarm2/crazyflie_interfaces/msg/AttitudeSetpoint.msg
     #
-    # def cmd_attitude_setpoint(...
+    def cmd_attitude_setpoint(self, roll: float, pitch: float, yaw_rate: float, thrust: int):
+        # intialize message
+        attitude_setpoint_msg = AttitudeSetpoint()
+        
+        # set message fields
+        attitude_setpoint_msg.roll = roll
+        attitude_setpoint_msg.pitch = pitch
+        attitude_setpoint_msg.yaw_rate = yaw_rate
+        attitude_setpoint_msg.thrust = thrust
+
+        # publish message
+        self.attitude_setpoint_pub.publish(attitude_setpoint_msg)
+        return
 
 
     def thrust_to_pwm(self, collective_thrust: float) -> int:
