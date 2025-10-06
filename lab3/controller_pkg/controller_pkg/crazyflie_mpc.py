@@ -191,7 +191,7 @@ class CrazyflieMPC(rclpy.node.Node):
     def trajectory_function(self, t):
         if self.trajectory_type == 'horizontal_circle':  
             a = 1.0                                                                 # radius of the circle
-            omega = 0.2                                                             # angular velocity (rad/s)
+            omega = 1.0                                                             # angular velocity (rad/s)
             pxr = self.trajectory_start_position[0] + a * np.cos(omega * t) - a
             pyr = self.trajectory_start_position[1] + a * np.sin(omega * t)
             pzr = self.trajectory_start_position[2]
