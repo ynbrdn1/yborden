@@ -55,16 +55,32 @@ class TrajectoryTrackingMpc:
         # - Write the appropriate limits for the state and control variables
         # - Make sure to use the given variable names
         # 
-        # Q = ... (quadratic cost for state -> x^T*Qx)
-        # R = ... (quadratic cost for control -> u^T*R*u)
-        # W = block_diag(Q,R) (as it is -> this is the combined cost matrix for all except terminal step) 
-        # 
-        # max_angle = ... [rad]
-        # max_thrust = ... [N]
-        # max_height = ... [m]
-        # max_velocity = ... [m/s]
-        # max_X = ... [m]
-        # max_Y = ... [m]
+
+        # need to tune cost values
+        cost_px=1
+        cost_py=1
+        cost_pz=1
+        cost_vx=1
+        cost_vy=1
+        cost_vz=1
+        cost_roll=1
+        cost_pitch=1
+        cost_yaw=1
+        Q=np.diag([cost_px,cost_py,cost_pz,cost_vx,cost_vy,cost_vz,cost_roll,cost_pitch,cost_yaw],nx)
+        cost_roll_c=1
+        cost_pitch_c=1
+        cost_yaw_c=1
+        cost_thrust=1
+        R=np.diag([cost_roll_c,cost_pitch_c,cost_yaw_c,cost_thrust],nu)
+        W=block_diag(Q,R)
+
+        # values based on guess
+        max_angle = np.radians(30)
+        max_thrust = 0.6695 # from max pwm
+        max_height = 100
+        max_velocity = 50
+        max_X = 100
+        max_Y = 100
 
         ocp.cost.cost_type = 'LINEAR_LS'
         ocp.cost.Vx = np.vstack([np.identity(nx), np.zeros((nu,nx))])
