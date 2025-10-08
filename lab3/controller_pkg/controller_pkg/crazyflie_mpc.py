@@ -266,11 +266,13 @@ class CrazyflieMPC(rclpy.node.Node):
         # [TODO] PART 6: Load the initial state variable and reference variable for the MPC problem
         #                   and solve the MPC problem at the current time step
         # 
-        # x0 = ... (numpy array (size=9) of the crazyflie state -> position, velocity, attitude)
+        x0 = np.array(self.position + self.velocity + self.attitude)
+        yref = trajectory[:,:-1]  # all columns except the last one
+        yref_e = trajectory[:,-1]  # only the last column
         # yref = ... (2D numpy array of the reference trajectory) (shape = NUM_STATE_VAR, NUM_MPC_STEPS)
         # yref_e = ... (1D numpy array for the terminal state variable (size=NUM_STATE_VAR))
         #
-        # status, x_mpc, u_mpc = ... 
+        status, x_mpc, u_mpc = self.mpc_solver.solve_mpc(x0, yref, yref_e)
         #
         # Hints: 
         #   1. Study the structure of trajectory from the self.navigator(t) function 
