@@ -189,17 +189,40 @@ class CrazyflieMPC(rclpy.node.Node):
     # - The last three values (zeros) are the euler angles (attitude references)
 
     def trajectory_function(self, t):
+        x_start = self.trajectory_start_position[0]
+        y_start = self.trajectory_start_position[1]
+        z_start = self.trajectory_start_position[2]
         if self.trajectory_type == 'horizontal_circle':  
             a = 1.0                                                                 # radius of the circle
             omega = 1.0                                                             # angular velocity (rad/s)
-            pxr = self.trajectory_start_position[0] + a * np.cos(omega * t) - a
-            pyr = self.trajectory_start_position[1] + a * np.sin(omega * t)
-            pzr = self.trajectory_start_position[2]
+
+            pxr = x_start + a * np.cos(omega * t) - a
+            pyr = y_start + a * np.sin(omega * t)
+            pzr = z_start
+
             vxr = -a * omega * np.sin(omega * t)
             vyr = a * omega * np.cos(omega * t)
             vzr = 0.0
+        
+        elif self.trajectory_type == "target_tracking":
+
+        elif self.trajectory_type == "lemniscate":
+            a = 1.0
+            b = 0.5 * tanh(0.1 * t)
+
+            pxr = x_start + a * sin(b * t)
+            pyr = y_start + a * sin(b * t) * cos(b * t)  
+            pzr = z_start
+
+            vx_ref(t) = a * b * cos(b * t)
+            vy_ref(t) = a * b * cos(2 * b * t)
+            vz_ref(t) = 0.0
+
+        else:
+            raise NotImplementedError(f"Trajectory type '{self.trajectory_type}' not implemented.")
 
         return np.array([pxr,pyr,pzr,vxr,vyr,vzr,0.,0.,0.])
+
 
 
     def navigator(self, t):
