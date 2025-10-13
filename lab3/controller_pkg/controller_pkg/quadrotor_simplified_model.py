@@ -48,7 +48,7 @@ class QuadrotorSimplified:
         )
 
         thrust_b = vertcat(0, 0, thrust)
-        acc = (1/self.mass) * mtimes(R, thrust_b) - vertcat(0, 0, self.gravity)
+        acc = (1/self.mass) * times(R, thrust_b) - vertcat(0, 0, self.gravity)
         vxdot = acc[0]
         vydot = acc[1]
         vzdot = acc[2]
