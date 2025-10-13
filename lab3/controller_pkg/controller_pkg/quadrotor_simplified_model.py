@@ -26,36 +26,38 @@ class QuadrotorSimplified:
         yaw_c = MX.sym('yaw_c')
         thrust = MX.sym('thrust')
 
-        # Setup state and control vectors
-        x = vertcat(px,py,pz,vx,vy,vz,roll,pitch,yaw)
-        u = vertcat(roll_c,pitch_c,yaw_c,thrust)
+        x = vertcat(px, py, pz, vx, vy, vz, roll, pitch, yaw)
+        u = vertcat(roll_c, pitch_c, yaw_c, thrust)
 
+        #Position kinematics
+        pxdot = vx
+        pydot = vy
+        pzdot = vz
 
-        # [TODO] Quadrotor dynamics for position and velocity
-        # Instructions: 
-        # - This is a simplified model of the Crazyflie drone dynamics, focusing on the 
-        #   position and velocity dynamics. The attitude dynamics are assumed to be linear. 
-        # - You need to write the dynamics for position and velocity states. 
-        # - Note that these are symbolic variable from the Casadi, hence you cannot apply the
-        #   usual numpy functions. Instead, you can use the functions that are imported from
-        #   the casadi (see line 1). Refer to https://web.casadi.org/docs/#arithmetic-operations
-        #   for additional available arithmetic operations permissable for Casadi MX objects.
-        # - Be careful about the orientation rotation matrix when calculating accelerations
-        #   (vxdot, vydot, vzdot) 
-        #
-        # pxdot = ...
-        # pydot = ...
-        # .
-        # .
-        # .
-        # vzdot = ...
+        #Rotation matrix 
+        R = vertcat(
+            horzcat(cos(yaw)*cos(pitch),
+                    cos(yaw)*sin(pitch)*sin(roll) - sin(yaw)*cos(roll),
+                    cos(yaw)*sin(pitch)*cos(roll) + sin(yaw)*sin(roll)),
+            horzcat(sin(yaw)*cos(pitch),
+                    sin(yaw)*sin(pitch)*sin(roll) + cos(yaw)*cos(roll),
+                    sin(yaw)*sin(pitch)*cos(roll) - cos(yaw)*sin(roll)),
+            horzcat(-sin(pitch),
+                    cos(pitch)*sin(roll),
+                    cos(pitch)*cos(roll))
+        )
 
+        thrust_b = vertcat(0, 0, thrust)
+        acc = (1/self.mass) * mtimes(R, thrust_b) - vertcat(0, 0, self.gravity)
+        vxdot = acc[0]
+        vydot = acc[1]
+        vzdot = acc[2]
 
-        # Linear first-order attitude dymamics
+        #Attitude dynamics
         rolldot = (roll_c - roll) / self.tau
         pitchdot = (pitch_c - pitch) / self.tau
         yawdot = (yaw_c - yaw) / self.tau
-        
-        f_expl = vertcat(pxdot,pydot,pzdot,vxdot,vydot,vzdot,rolldot,pitchdot,yawdot)
+
+        f_expl = vertcat(pxdot, pydot, pzdot, vxdot, vydot, vzdot, rolldot, pitchdot, yawdot)
 
         return (f_expl, x, u)
