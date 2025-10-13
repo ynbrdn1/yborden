@@ -43,12 +43,18 @@ class QuadrotorSimplified:
         # - Be careful about the orientation rotation matrix when calculating accelerations
         #   (vxdot, vydot, vzdot) 
         #
-        # pxdot = ...
-        # pydot = ...
-        # .
-        # .
-        # .
-        # vzdot = ...
+        cr = cos(roll)
+        sr = sin(roll)
+        cp = cos(pitch)
+        sp = sin(pitch)
+        cy = cos(yaw)
+        sy = sin(yaw)
+        pxdot = vx
+        pydot = vy
+        pzdot = vz
+        vxdot = -(cy * sp * cr + sy * sr) * thrust / self.mass
+        vydot = -(sy * sp * cr - cy * sr) * thrust / self.mass
+        vzdot = -(cp * cr) * thrust / self.mass + self.gravity
 
 
         # Linear first-order attitude dymamics
