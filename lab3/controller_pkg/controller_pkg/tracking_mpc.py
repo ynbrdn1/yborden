@@ -66,12 +66,12 @@ class TrajectoryTrackingMpc:
         cost_roll=1
         cost_pitch=1
         cost_yaw=1
-        Q=np.diag([cost_px,cost_py,cost_pz,cost_vx,cost_vy,cost_vz,cost_roll,cost_pitch,cost_yaw],nx)
+        Q=np.diag([cost_px,cost_py,cost_pz,cost_vx,cost_vy,cost_vz,cost_roll,cost_pitch,cost_yaw])
         cost_roll_c=1
         cost_pitch_c=1
         cost_yaw_c=1
         cost_thrust=1
-        R=np.diag([cost_roll_c,cost_pitch_c,cost_yaw_c,cost_thrust],nu)
+        R=np.diag([cost_roll_c,cost_pitch_c,cost_yaw_c,cost_thrust])
         W=block_diag(Q,R)
 
         # values based on guess
@@ -101,7 +101,6 @@ class TrajectoryTrackingMpc:
         ocp.constraints.ubx = np.array([max_X, max_Y, max_height, max_velocity, max_velocity, max_velocity, max_angle, max_angle, np.radians(180)])
         ocp.constraints.idxbx = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8])
         
-
         # initial state
         ocp.constraints.x0 = np.zeros(9)
 
@@ -121,6 +120,7 @@ class TrajectoryTrackingMpc:
         AcadosOcpSolver.build(ocp.code_export_directory, with_cython=True)
 
         if self.acados_generated_files_path.is_dir():
+            print(f'Acados cython code generated in {self.acados_generated_files_path}')
             sys.path.append(str(self.acados_generated_files_path))
         acados_ocp_solver_pyx = importlib.import_module('c_generated_code.acados_ocp_solver_pyx')
         self.ocp_solver = acados_ocp_solver_pyx.AcadosOcpSolverCython(self.model_name, 'SQP', self.num_steps)

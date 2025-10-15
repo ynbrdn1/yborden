@@ -64,7 +64,7 @@ class CrazyflieMPC(rclpy.node.Node):
 
         self.control_queue = None
         self.is_flying = False
-    
+
         self.get_logger().info('Initialization completed...')
 
 
@@ -77,6 +77,7 @@ class CrazyflieMPC(rclpy.node.Node):
             f'{prefix}/pose',
             self._pose_msg_callback,
             10)
+        self.position_sub  # prevent unused variable warning
         # topic type -> PoseStamped
         # topic name -> {prefix}/pose (e.g., '/cf_1/pose')
         # callback -> self._pose_msg_callback
@@ -93,14 +94,14 @@ class CrazyflieMPC(rclpy.node.Node):
 
         # (c) MPC solution path publisher
         self.mpc_solution_path_pub = self.create_publisher(Path,
-                                                          f'{prefix}/mpc_solution_path')
+                                                            f'{prefix}/mpc_solution_path',10)
         # topic type -> Path
         # topic name -> {prefix}/mpc_solution_path
         # publisher variable -> self.mpc_solution_path_pub
 
         # (d) Attitude setpoint command publisher
         self.attitude_setpoint_pub = self.create_publisher(AttitudeSetpoint,
-                                                          f'{prefix}/cmd_attitude_setpoint')
+                                                            f'{prefix}/cmd_attitude_setpoint',10)
         # topic type -> AttitudeSetpoint
         # topic name -> {prefix}/cmd_attitude_setpoint
         # publisher variable -> self.attitude_setpoint_pub
@@ -132,6 +133,7 @@ class CrazyflieMPC(rclpy.node.Node):
     #   3. Be sure to wrap the attitude angles between -pi to +pi. 
     
     def _pose_msg_callback(self, msg: PoseStamped):
+        print("here")
         self.position = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
         angles = tf_transformations.euler_from_quaternion([msg.pose.orientation.x,
                                                                 msg.pose.orientation.y,
@@ -144,9 +146,9 @@ class CrazyflieMPC(rclpy.node.Node):
 
     
     def _twist_msg_callback(self, msg: TwistStamped):
-      self.velocity = [msg.twist.linear.x,
-                       msg.twist.linear.y,
-                       msg.twist.linear.z]
+        self.velocity = [msg.twist.linear.x,
+                        msg.twist.linear.y,
+                        msg.twist.linear.z]
 
 
     def start_trajectory(self, msg):
@@ -189,17 +191,46 @@ class CrazyflieMPC(rclpy.node.Node):
     # - The last three values (zeros) are the euler angles (attitude references)
 
     def trajectory_function(self, t):
+        x_start = self.trajectory_start_position[0]
+        y_start = self.trajectory_start_position[1]
+        z_start = self.trajectory_start_position[2]
         if self.trajectory_type == 'horizontal_circle':  
             a = 1.0                                                                 # radius of the circle
             omega = 1.0                                                             # angular velocity (rad/s)
-            pxr = self.trajectory_start_position[0] + a * np.cos(omega * t) - a
-            pyr = self.trajectory_start_position[1] + a * np.sin(omega * t)
-            pzr = self.trajectory_start_position[2]
+
+            pxr = x_start + a * np.cos(omega * t) - a
+            pyr = y_start + a * np.sin(omega * t)
+            pzr = z_start
+
             vxr = -a * omega * np.sin(omega * t)
             vyr = a * omega * np.cos(omega * t)
             vzr = 0.0
+        
+        elif self.trajectory_type == "target_tracking":
+            pxr = self.target_position[0]
+            pyr = self.target_position[1]
+            pzr = self.target_position[2]
+            vxr = 0.0
+            vyr = 0.0
+            vzr = 0.0
+
+        elif self.trajectory_type == "lemniscate":
+            a = 1.0
+            b = 0.5 * tanh(0.1 * t)
+
+            pxr = x_start + a * np.sin(b * t)
+            pyr = y_start + a * np.sin(b * t) * np.cos(b * t)  
+            pzr = z_start
+
+            vxr = a * b * np.cos(b * t)
+            vyr = a * b * np.cos(2 * b * t)
+            vzr = 0.0
+
+        else:
+            raise NotImplementedError(f"Trajectory type '{self.trajectory_type}' not implemented.")
 
         return np.array([pxr,pyr,pzr,vxr,vyr,vzr,0.,0.,0.])
+
 
 
     def navigator(self, t):
