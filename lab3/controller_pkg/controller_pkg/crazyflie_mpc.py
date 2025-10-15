@@ -133,7 +133,6 @@ class CrazyflieMPC(rclpy.node.Node):
     #   3. Be sure to wrap the attitude angles between -pi to +pi. 
     
     def _pose_msg_callback(self, msg: PoseStamped):
-        print("here")
         self.position = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
         angles = tf_transformations.euler_from_quaternion([msg.pose.orientation.x,
                                                                 msg.pose.orientation.y,
