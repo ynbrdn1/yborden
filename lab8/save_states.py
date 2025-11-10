@@ -18,7 +18,7 @@ class SaveStates(Node):
 
     def save_state_callback(self, msg):
         position = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
-        with open('cf_states.csv', 'a') as f:
+        with open('\hrma\cf_states.csv', 'a') as f:
             f.write(f"{time.time()}, {position[0]}, {position[1]}, {position[2]}\n")
 
 

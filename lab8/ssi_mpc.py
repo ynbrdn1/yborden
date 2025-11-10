@@ -271,7 +271,7 @@ class SSIMpc:
         x_pred = x_in + dt*self.f(x_in,u_in,alpha_in)
         h=x_now-x_pred
         z=np.concatenate((x_in, u_in))
-        phi = (1 / np.sqrt(self.n_rf)) * np.cos(self.omega @ (self.Bz @ z) + self.b)
+        phi = (1/cs.sqrt(self.n_rf)) * cs.cos(cs.mtimes(self.omega, cs.mtimes(self.Bz, z)) + self.b)
         grad_alpha_loss=-np.outer(h[self.target_mask], phi)
         alpha_out=alpha_in-self.learning_rate*grad_alpha_loss
 
