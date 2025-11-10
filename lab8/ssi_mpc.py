@@ -88,8 +88,30 @@ class SSIMpc:
         # - You can note that the augemented term also has direct dependence to current state/control variables 
         #   self.x and self.u because of the definition of self.rf in the __init__().  
         
+        # calculate p_dot
+        p_dot=self.v
 
-        
+        # calculate v_dot
+        roll=self.x[6]
+        pitch=self.x[7]
+        yaw=self.x[8]
+        R = vertcat(
+            horzcat(cos(yaw)*cos(pitch),
+                    cos(yaw)*sin(pitch)*sin(roll) - sin(yaw)*cos(roll),
+                    cos(yaw)*sin(pitch)*cos(roll) + sin(yaw)*sin(roll)),
+            horzcat(sin(yaw)*cos(pitch),
+                    sin(yaw)*sin(pitch)*sin(roll) + cos(yaw)*cos(roll),
+                    sin(yaw)*sin(pitch)*cos(roll) - cos(yaw)*sin(roll)),
+            horzcat(-sin(pitch),
+                    cos(pitch)*sin(roll),
+                    cos(pitch)*cos(roll)))
+        v_dot = (1/self.quad.mass) * cs.mtimes(R, vertcat(0,0,self.u[3])) - vertcat(0, 0, self.quad.gravity)
+
+        # calculate e_dot
+        rolldot = (self.u[0] - roll) / self.quad.tau
+        pitchdot = (self.u[1]  - pitch) / self.quad.tau
+        yawdot = (self.u[2]  - yaw) / self.quad.tau
+        e_dot=cs.vertcat(rolldot,pitchdot,yawdot)
 
         return cs.vertcat(p_dot, v_dot, e_dot) + cs.vertcat(cs.mtimes(self.alpha, self.rf))
 
@@ -145,6 +167,31 @@ class SSIMpc:
         # max_X = ... [m]
         # max_Y = ... [m]
 
+        # need to tune cost values
+        cost_px=50
+        cost_py=50
+        cost_pz=50
+        cost_vx=20
+        cost_vy=20
+        cost_vz=15
+        cost_roll=1
+        cost_pitch=1
+        cost_yaw=1
+        Q=np.diag([cost_px,cost_py,cost_pz,cost_vx,cost_vy,cost_vz,cost_roll,cost_pitch,cost_yaw])
+        cost_roll_c=10
+        cost_pitch_c=10
+        cost_yaw_c=1
+        cost_thrust=20
+        R=np.diag([cost_roll_c,cost_pitch_c,cost_yaw_c,cost_thrust])
+        W=block_diag(Q,R)
+
+        # values based on guess
+        max_angle = np.radians(30)
+        max_thrust = 0.6695 # from max pwm
+        max_height = 20
+        max_velocity = 50
+        max_X = 100
+        max_Y = 100
 
 
         ocp.cost.cost_type = 'LINEAR_LS'
@@ -221,8 +268,12 @@ class SSIMpc:
         # 
         # [...intermediate steps...]
         # alpha_out = ... 
-        
-
+        x_pred = x_in + dt*self.f(x_in,u_in,alpha_in)
+        h=x_now-x_pred
+        z=np.concatenate((x_in, u_in))
+        phi = (1 / np.sqrt(self.n_rf)) * np.cos(self.omega @ (self.Bz @ z) + self.b)
+        grad_alpha_loss=-np.outer(h[self.target_mask], phi)
+        alpha_out=alpha_in-self.learning_rate*grad_alpha_loss
 
         # log latest values
         self.alpha_last = np.copy(alpha_out)
