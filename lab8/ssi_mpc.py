@@ -173,7 +173,7 @@ class SSIMpc:
         cost_pz=50
         cost_vx=20
         cost_vy=20
-        cost_vz=15
+        cost_vz=20
         cost_roll=1
         cost_pitch=1
         cost_yaw=1
@@ -269,10 +269,10 @@ class SSIMpc:
         # [...intermediate steps...]
         # alpha_out = ... 
         x_pred = x_in + dt*self.f(x_in,u_in,alpha_in)
-        h=x_now-x_pred
+        error=x_now-x_pred
         z=np.concatenate((x_in, u_in))
-        phi = (1 / np.sqrt(self.n_rf)) * np.cos(self.omega @ (self.Bz @ z) + self.b)
-        grad_alpha_loss=-np.outer(h[self.target_mask], phi)
+        phi = (1/cs.sqrt(self.n_rf)) * cs.cos(cs.mtimes(self.omega, cs.mtimes(self.Bz, z)) + self.b)
+        grad_alpha_loss=-np.outer(error[self.target_mask], phi)
         alpha_out=alpha_in-self.learning_rate*grad_alpha_loss
 
         # log latest values

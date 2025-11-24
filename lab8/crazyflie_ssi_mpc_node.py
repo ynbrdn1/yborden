@@ -21,6 +21,10 @@ import tf_transformations
 
 from enum import Enum
 from collections import deque
+from rclpy.qos import QoSProfile
+
+
+
 
 class Motors(Enum):
     MOTOR_CLASSIC = 1 # https://store.bitcraze.io/products/4-x-7-mm-dc-motor-pack-for-crazyflie-2 w/ standard props
@@ -126,14 +130,14 @@ class CrazyflieMPC(rclpy.node.Node):
         # topic name -> {prefix}/mpc_solution_path
         # publisher variable -> self.mpc_solution_path_pub
         self.mpc_solution_path_pub = self.create_publisher(Path,
-                                                          f'{prefix}/mpc_solution_path')
+                                                          f'{prefix}/mpc_solution_path',10)
 
         # (d) Attitude setpoint command publisher
         # topic type -> AttitudeSetpoint
         # topic name -> {prefix}/cmd_attitude_setpoint
         # publisher variable -> self.attitude_setpoint_pub
         self.attitude_setpoint_pub = self.create_publisher(AttitudeSetpoint,
-                                                          f'{prefix}/cmd_attitude_setpoint')
+                                                          f'{prefix}/cmd_attitude_setpoint',10)
     
         self.takeoffService = self.create_subscription(Empty, f'/all/mpc_takeoff', self.takeoff, 10)
         self.landService = self.create_subscription(Empty, f'/all/mpc_land', self.land, 10)
@@ -180,16 +184,27 @@ class CrazyflieMPC(rclpy.node.Node):
     #   2. You can use tf_transformations for the conversion into different orientation representations. 
     #   3. Be sure to wrap the attitude angles between -pi to +pi. 
     def _pose_msg_callback(self, msg: PoseStamped):
-        self.position = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
-        angles = tf_transformations.euler_from_quaternion([msg.pose.orientation.x,
-                                                                msg.pose.orientation.y,
-                                                                msg.pose.orientation.z,
-                                                                msg.pose.orientation.w])
-        # wrap angles
+        # Extract position
+        self.position = [
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        ]
+
+        # Convert quaternion to Euler angles
+        angles = list(tf_transformations.euler_from_quaternion([
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w
+        ]))
+
+        # Wrap angles to the range (-pi, pi)
         for i, angle in enumerate(angles):
             angles[i] = np.arctan2(np.sin(angle), np.cos(angle))
-        self.attitude = list(angles)
 
+        # Store as list (roll, pitch, yaw)
+        self.attitude = angles
     
     def _twist_msg_callback(self, msg: TwistStamped):
         self.velocity = [msg.twist.linear.x,
@@ -261,7 +276,7 @@ class CrazyflieMPC(rclpy.node.Node):
 
         elif self.trajectory_type == "lemniscate":
             a = 1.0
-            b = 0.5 * tanh(0.1 * t)
+            b = 0.5 * np.tanh(0.1 * t)
 
             pxr = x_start + a * np.sin(b * t)
             pyr = y_start + a * np.sin(b * t) * np.cos(b * t)  
@@ -363,6 +378,13 @@ class CrazyflieMPC(rclpy.node.Node):
         #
         # IMPORTANT: make sure to check arguements to solve_mpc() as it now includes 'dt'
         #
+
+        x0=np.array(self.position + self.velocity + self.attitude)
+        yref=trajectory[:, :-1]
+        yref_e=trajectory[:, -1]
+        
+
+
         status, x_mpc, u_mpc = self.mpc_solver.solve_mpc(x0, yref, yref_e, dt)
 
         self.control_queue = deque(u_mpc)
@@ -407,7 +429,7 @@ def main():
     rclpy.init()
 
     # Quadrotor Parameters (same as MPC template for consistency)
-    mass = 0.028
+    mass = 0.056 # 0.028 
     arm_length = 0.044
     Ixx = 2.3951e-5
     Iyy = 2.3951e-5
