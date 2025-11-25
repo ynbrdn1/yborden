@@ -98,6 +98,30 @@ class SelfAdaptiveMPC:
         #   Keep the matrix sizes, and terms in mind to understand how the final prediction model works.
         #
 
+        # calculate p_dot
+        p_dot=self.v
+
+        # calculate v_dot
+        roll=self.x[6]
+        pitch=self.x[7]
+        yaw=self.x[8]
+        R = vertcat(
+            horzcat(cos(yaw)*cos(pitch),
+                    cos(yaw)*sin(pitch)*sin(roll) - sin(yaw)*cos(roll),
+                    cos(yaw)*sin(pitch)*cos(roll) + sin(yaw)*sin(roll)),
+            horzcat(sin(yaw)*cos(pitch),
+                    sin(yaw)*sin(pitch)*sin(roll) + cos(yaw)*cos(roll),
+                    sin(yaw)*sin(pitch)*cos(roll) - cos(yaw)*sin(roll)),
+            horzcat(-sin(pitch),
+                    cos(pitch)*sin(roll),
+                    cos(pitch)*cos(roll)))
+        v_dot = (1/self.quad.mass) * cs.mtimes(R, vertcat(0,0,self.u[3])) - vertcat(0, 0, self.quad.gravity)
+
+        # calculate e_dot
+        rolldot = (self.u[0] - roll) / self.quad.tau
+        pitchdot = (self.u[1]  - pitch) / self.quad.tau
+        yawdot = (self.u[2]  - yaw) / self.quad.tau
+        e_dot=cs.vertcat(rolldot,pitchdot,yawdot)
 
         return cs.vertcat(p_dot, v_dot, e_dot) 
     
@@ -145,6 +169,31 @@ class SelfAdaptiveMPC:
         # max_X = ... [m]
         # max_Y = ... [m]
 
+        # need to tune cost values
+        cost_px=50
+        cost_py=50
+        cost_pz=50
+        cost_vx=20
+        cost_vy=20
+        cost_vz=20
+        cost_roll=1
+        cost_pitch=1
+        cost_yaw=1
+        Q=np.diag([cost_px,cost_py,cost_pz,cost_vx,cost_vy,cost_vz,cost_roll,cost_pitch,cost_yaw])
+        cost_roll_c=10
+        cost_pitch_c=10
+        cost_yaw_c=1
+        cost_thrust=20
+        R=np.diag([cost_roll_c,cost_pitch_c,cost_yaw_c,cost_thrust])
+        W=block_diag(Q,R)
+
+        # values based on guess
+        max_angle = np.radians(30)
+        max_thrust = 0.6695 # from max pwm
+        max_height = 20
+        max_velocity = 50
+        max_X = 100
+        max_Y = 100
 
         ocp.cost.cost_type = 'LINEAR_LS'
         ocp.cost.Vx = np.vstack([np.identity(nx), np.zeros((nu,nx))])
@@ -247,7 +296,53 @@ class SelfAdaptiveMPC:
         # if self.predictor_type=='multiple_learners':
         #     raise NotImplementedError('multiple_learners predictor type not implemented yet')
         
+        if self.predictor_type=='single_learner':
+            # update target pose memory with a new entry
+            self.target_dense_pose_log = np.roll(self.target_dense_pose_log, shift=1, axis=1)
+            self.target_dense_pose_log[:,0] = np.copy(target_now[:3]) # only x,y,z position
 
+            # construct target memory vector starting from 2nd index to compare with most recent target position
+            start = 1
+            step = int(self.step_size)
+            num_indices = int(self.memory_horizon)
+            # guard against indexing issues
+            end_idx = start + num_indices*step
+            if end_idx > self.target_dense_pose_log.shape[1]:
+                # fallback: take as many as available
+                end_idx = self.target_dense_pose_log.shape[1]
+                start = end_idx - num_indices*step
+                if start < 0:
+                    start = 0
+            target_memory_vector = self.target_dense_pose_log[:, start:end_idx:step].T.flatten()  # shape (memory_horizon*3, )
+
+            # compute true current target velocity based on latest and previous target logs
+            prev_pos = self.target_dense_pose_log[:,1]  # after roll, index 1 is previous
+            curr_pos = self.target_dense_pose_log[:,0]
+            # dt could be small (e.g., 0.02), compute velocity
+            target_vel_true = (curr_pos - prev_pos) / (dt if dt>0 else self.mpc_dt)
+
+            # construct RFF features phi = cos(w^T z + b)
+            # Here we use target_memory_vector as z (shape: target_memory_dim,)
+            z = target_memory_vector
+            # ensure shapes: omega (n_rf, input_dim), b (n_rf,)
+            # convert z to 1D numpy
+            z_np = np.asarray(z).reshape(-1)
+            phi = np.cos(self.omega.dot(z_np) + self.b)  # shape (n_rf,)
+
+            # prediction from current alpha
+            # alpha_in shape (out_dim, n_rf)
+            pred_vel = alpha_in.dot(phi)  # shape (out_dim,)
+            # If outputs less than 3, map using target_mask/Bh might be necessary. Here we assume full 3-dim
+            # compute error
+            error = target_vel_true - pred_vel
+
+            # simple gradient update (OGD) using learning_rate
+            # alpha <- alpha + lr * error[:,None] * phi[None,:]
+            alpha_out = alpha_in + self.learning_rate * (error.reshape(-1,1) @ phi.reshape(1,-1))
+
+        else:
+            raise NotImplementedError('multiple_learners predictor type not implemented yet')
+        
 
         # log latest values
         self.alpha_last = np.copy(alpha_out)
@@ -304,6 +399,60 @@ class SelfAdaptiveMPC:
         # if self.predictor_type=='multiple_learners':
         #     raise NotImplementedError('multiple_learners predictor type not implemented yet')
 
+        if self.predictor_type=='single_learner':
+            # # past target position -> one mpc horizon back
+            idx_past = int(self.num_steps * self.step_size)
+            if idx_past >= self.target_dense_pose_log.shape[1]:
+                idx_past = self.target_dense_pose_log.shape[1]-1
+            target_past = self.target_dense_pose_log[:, idx_past]
+
+            # reconstruct target trajectory starting from past position
+            predicted_traj = np.zeros((3, self.num_steps+1)) 
+            actual_traj = np.zeros((3, self.num_steps+1))
+            predicted_traj[:,0] = target_past[:3]
+            actual_traj[:,0] = target_past[:3]
+
+            # starting index for memory vector at time of target_past (use 2*mpc_horizon back as in comment)
+            start = int(2*self.num_steps*self.step_size)
+            if start + int(self.memory_horizon)*int(self.step_size) >= self.target_dense_pose_log.shape[1]:
+                # clamp start
+                start = max(0, self.target_dense_pose_log.shape[1] - int(self.memory_horizon)*int(self.step_size) - 1)
+            step = int(self.step_size)
+            num_indices = int(self.memory_horizon)
+            past_memory_vector = self.target_dense_pose_log[:, start:start+num_indices*step:step].T.flatten()
+
+            # iterate over mpc horizon
+            for i in range(self.num_steps):
+                # compute features from past_memory_vector
+                z_np = np.asarray(past_memory_vector).reshape(-1)
+                phi = np.cos(self.omega.dot(z_np) + self.b)  # (n_rf,)
+
+                # predict velocity and integrate to get next position
+                pred_vel = self.alpha_last.dot(phi)  # (3,)
+                target_next = predicted_traj[:, i] + pred_vel * self.mpc_dt
+
+                predicted_traj[:, i+1] = target_next
+
+                # actual trajectory: actual target values are available in dense log
+                # index in dense log corresponding to this future time:
+                # we take the value at (idx_past - self.num_steps*self.step_size + i*self.step_size)
+                actual_idx = idx_past - int(self.num_steps*self.step_size) + (i+1)*step
+                # clamp
+                actual_idx = np.clip(actual_idx, 0, self.target_dense_pose_log.shape[1]-1)
+                actual_traj[:, i+1] = self.target_dense_pose_log[:, actual_idx]
+
+                # update past_memory_vector: shift left by 3 and append latest predicted position
+                past_memory_vector = np.roll(past_memory_vector, -3)
+                past_memory_vector[-3:] = target_next
+
+            # compute error as difference in increments
+            pred_increments = np.diff(predicted_traj, axis=1)
+            actual_increments = np.diff(actual_traj, axis=1)
+            vel_error_matrix = (pred_increments - actual_increments) / self.mpc_dt
+            overall_rms_error = np.sqrt(np.mean(vel_error_matrix**2))
+        else:
+            raise NotImplementedError('multiple_learners predictor type not implemented yet')
+
 
         return overall_rms_error # scalar
 
@@ -354,6 +503,40 @@ class SelfAdaptiveMPC:
             #     target_memory_vector = ... # shift by 3 for x,y,z and then add the latest predicted position
                 
             # yref_e = ... # final predicted target state 
+
+
+            # We'll predict positions using alpha_in and the RFF phi built from target_memory_vector
+            predicted_positions = np.zeros((3, N+1))
+            # initialize first predicted position as the most recent actual
+            predicted_positions[:,0] = target_memory_vector[-3:] if target_memory_vector.size>=3 else target_now[:3]
+
+            past_memory_vector = np.copy(target_memory_vector)
+            for i in range(N):
+                z_np = np.asarray(past_memory_vector).reshape(-1)
+                phi = np.cos(self.omega.dot(z_np) + self.b)  # (n_rf,)
+                pred_vel = alpha_in.dot(phi)  # (3,)
+                target_next = predicted_positions[:, i] + pred_vel * self.mpc_dt
+                predicted_positions[:, i+1] = target_next
+
+                # Fill yref for this step (nx entries). Put predicted target in position entries and predicted velocity in velocity slots
+                y = np.zeros(nx)
+                y[0:3] = target_next
+                y[3:6] = pred_vel
+                # leave euler angles as zeros (we don't predict them)
+                yref[:, i] = y
+
+                # update memory vector: shift and append predicted position
+                if past_memory_vector.size >= 3:
+                    past_memory_vector = np.roll(past_memory_vector, -3)
+                    past_memory_vector[-3:] = target_next
+                else:
+                    # fallback
+                    past_memory_vector = np.tile(target_next, num_indices).flatten()
+
+            # final reference (terminal)
+            yref_e = np.zeros(nx)
+            yref_e[0:3] = predicted_positions[:, -1]
+            yref_e[3:6] = (predicted_positions[:, -1] - predicted_positions[:, -2]) / self.mpc_dt
 
          
         if self.predictor_type=='multiple_learners':
