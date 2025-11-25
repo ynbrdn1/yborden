@@ -307,19 +307,7 @@ class SelfAdaptiveMPC:
             num_indices = int(self.memory_horizon)
             # guard against indexing issues
             end_idx = start + num_indices*step
-            if end_idx > self.target_dense_pose_log.shape[1]:
-                # fallback: take as many as available
-                end_idx = self.target_dense_pose_log.shape[1]
-                start = end_idx - num_indices*step
-                if start < 0:
-                    start = 0
             target_memory_vector = self.target_dense_pose_log[:, start:end_idx:step].T.flatten()  # shape (memory_horizon*3, )
-
-            # compute true current target velocity based on latest and previous target logs
-            prev_pos = self.target_dense_pose_log[:,1]  # after roll, index 1 is previous
-            curr_pos = self.target_dense_pose_log[:,0]
-            # dt could be small (e.g., 0.02), compute velocity
-            target_vel_true = (curr_pos - prev_pos) / (dt if dt>0 else self.mpc_dt)
 
             # construct RFF features phi = cos(w^T z + b)
             # Here we use target_memory_vector as z (shape: target_memory_dim,)
@@ -331,15 +319,15 @@ class SelfAdaptiveMPC:
 
             # prediction from current alpha
             # alpha_in shape (out_dim, n_rf)
-            pred_vel = alpha_in.dot(phi)  # shape (out_dim,)
-            # If outputs less than 3, map using target_mask/Bh might be necessary. Here we assume full 3-dim
-            # compute error
-            error = target_vel_true - pred_vel
+            pred_pos = alpha_in.dot(phi)  # shape (out_dim,)
+            y_t = target_now[:3]
+            error = y_t - pred_pos
+            grad = -self.learning_rate * (error.reshape(-1,1) @ phi.reshape(1,-1))
 
             # simple gradient update (OGD) using learning_rate
             # alpha <- alpha + lr * error[:,None] * phi[None,:]
-            alpha_out = alpha_in + self.learning_rate * (error.reshape(-1,1) @ phi.reshape(1,-1))
-
+            alpha_out = alpha_in - grad
+            
         else:
             raise NotImplementedError('multiple_learners predictor type not implemented yet')
         
