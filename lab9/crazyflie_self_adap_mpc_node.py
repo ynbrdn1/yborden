@@ -74,56 +74,51 @@ class CrazyflieMPC(rclpy.node.Node):
 
 
         ############################################################################################################
-        # [TODO] SELF-ADAPTIVE PART: Initialize the self-adaptive MPC experts here
+        # SELF-ADAPTIVE PART: Initialize the self-adaptive MPC experts here
         # Note:
         #   - You need to initialize all the variables mentioned here, some have been defined
         #   - Uncomment all these variables after filling the values in place of ...
         #
         # # PREDEFINED VARIABLES
-        # self.mpc_expert_list = []
-        # self.last_selection_time = 0.0
-        # self.selected_expert_idx = 0
+        self.mpc_expert_list = []
+        self.last_selection_time = 0.0
+        self.selected_expert_idx = 0
         
         # # Tuning parameters for the 'AS' module
-        # self.selection_interval = ... # seconds
-        # self.gamma = ... # discount factor for the expert loss update
-        # self.a = ... # scaling factor for the reward function (see paper)
-        # self.eta = ... # learning rate for the expert weight update (see paper)
+        self.selection_interval = 0.25 # seconds
+        self.gamma = 0.98 # discount factor for the expert loss update
+        self.a = 4 # scaling factor for the reward function (see paper)
+        self.eta = 0.2 # learning rate for the expert weight update (see paper)
 
         # # All the experts go here sequantially by calling self.init_expert() function
 
-        # name = 'expert_1'
-        # kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        # kernel_std = ... # standard deviation
-        # lr = ... # learning rate
-        # mh = ... # memory horizon for past target position history
-        # p_type = 'single_learner' # predictor type BONUS PART: 'multiple_learners'
-        # self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
+        # [TODO] tune parameters (lr, kernel_std) for first expert if needed
+        name = 'expert_1'
+        kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
+        kernel_std = 1 # standard deviation ("accurate expert")
+        lr = 0.25 # learning rate (from Figure 8)
+        mh = 4 # memory horizon for past target position history (3-5 based on instructions)
+        p_type = 'single_learner' # predictor type BONUS PART: 'multiple_learners'
+        self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
 
+        ### [TODO] uncomment params for second expert once we get one to work
         # name = 'expert_2'
         # kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        # kernel_std = ... # standard deviation
-        # lr = ... # learning rate
-        # mh = ... # memory horizon for past target position history
+        # kernel_std = 0.1 # standard deviation ("agile expert")
+        # lr = 0.5 # learning rate (from Figure 8)
+        # mh = 4 # memory horizon for past target position history
         # p_type = 'single_learner' # predictor type
         # self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
 
         # # numpy array to store the expert error at each update step (at rate 50Hz)
-        # self.expert_error_array = np.zeros(len(self.mpc_expert_list))
-        # self.list_of_expert_error_arrays = [] # a list to store all the expert error arrays over time
+        self.expert_error_array = np.zeros(len(self.mpc_expert_list))
+        self.list_of_expert_error_arrays = [] # a list to store all the expert error arrays over time
 
         # # initialize probability distribution over experts
-        # self.P_t = ... # uniform distribution initially, 1D array with size = number of experts
+        self.P_t = np.ones(len(self.mpc_expert_list)) / len(self.mpc_expert_list)  # uniform distribution initially, 1D array with size = number of experts
 
         # # discounted sum of losses for each expert (array)
-        # self.S_t = ... # zeros array initially, 1D array with size = number of experts
-
-
-
-
-
-
-
+        self.S_t = np.zeros(len(self.mpc_expert_list)) # zeros array initially, 1D array with size = number of experts
 
         self.control_queue = None
         self.is_flying = False
@@ -137,47 +132,60 @@ class CrazyflieMPC(rclpy.node.Node):
 
 
         ############################################################################################################
-        # [TODO] PART 1: Add ROS2 subscriber for the Crazyflie state data, and publishers for the control command and MPC trajectory solution
+        # PART 1: Add ROS2 subscriber for the Crazyflie state data, and publishers for the control command and MPC trajectory solution
 
         # (a) Position subscriber
         # topic type -> PoseStamped
         # topic name -> {prefix}/pose (e.g., '/cf_1/pose')
         # callback -> self._pose_msg_callback
+        self.position_sub = self.create_subscription(PoseStamped,
+                                                    f'{prefix}/pose',
+                                                    self._pose_msg_callback,
+                                                    10)
 
         # (b) Velocity subscriber
         # topic type -> TwistStamped
         # topic name -> {prefix}/twist
         # callback -> self._twist_msg_callback
+        self.velocity_sub = self.create_subscription(TwistStamped,
+                                                    f'{prefix}/twist',
+                                                    self._twist_msg_callback,
+                                                    10)
 
         # (c) MPC solution path publisher
         # topic type -> Path
         # topic name -> {prefix}/mpc_solution_path
         # publisher variable -> self.mpc_solution_path_pub
+        self.mpc_solution_path_pub = self.create_publisher(Path,
+                                                          f'{prefix}/mpc_solution_path',10)
 
         # (d) Attitude setpoint command publisher
         # topic type -> AttitudeSetpoint
         # topic name -> {prefix}/cmd_attitude_setpoint
         # publisher variable -> self.attitude_setpoint_pub
-
-        
-        
+        self.attitude_setpoint_pub = self.create_publisher(AttitudeSetpoint,
+                                                          f'{prefix}/cmd_attitude_setpoint',10)
         ############################################################################################################
-        # [TODO] SELF-ADAPTIVE PART: Add ROS2 subscriber for the target state data, and publishers for the target prediction path
+        # SELF-ADAPTIVE PART: Add ROS2 subscriber for the target state data, and publishers for the target prediction path
 
         # (a) Target Position subscriber
         # topic type -> PoseStamped
         # topic name -> {target_prefix}/pose 
         # callback -> self._target_pose_msg_callback
+        self.target_position_sub = self.create_subscription(PoseStamped,
+                                                            f'{target_prefix}/pose',
+                                                            self._target_pose_msg_callback,
+                                                            10)
 
         # (b) Target prediction path publisher
         # topic type -> Path
         # topic name -> 'cf_3/mpc_solution_path' # we will use dummy cf_name cf_3 for the target prediction visualization
         # publisher variable -> self.target_prediction_path_pub
+        self.target_prediction_path_pub = self.create_publisher(Path,
+                                                          'cf_3/mpc_solution_path',10)
 
-        
 
-
-        
+    
         # disabling takeoff service because we want to start tracking the target right away
         # self.takeoffService = self.create_subscription(Empty, f'/all/mpc_takeoff', self.takeoff, 10)
         self.landService = self.create_subscription(Empty, f'/all/mpc_land', self.land, 10)
@@ -187,9 +195,11 @@ class CrazyflieMPC(rclpy.node.Node):
 
 
 
-        # [TODO] PART 2: Add ROS2 timers for the main control loop (callback -> self._main_loop) and 
+        # PART 2: Add ROS2 timers for the main control loop (callback -> self._main_loop) and 
         #                the MPC solver loop (self._mpc_solver_loop). 
         #  Hint: Keep in mind that the variable self.rate is the control update rate specified in Hz
+        self.main_timer = self.create_timer(1.0/self.rate, self._main_loop)
+        self.mpc_timer = self.create_timer(1.0/self.rate, self._mpc_solver_loop)
 
 
 
@@ -212,7 +222,7 @@ class CrazyflieMPC(rclpy.node.Node):
 
     def set_random_features(self, kernel, kernel_std, n_features):
 
-        # [TODO] SELF-ADAPTIVE PART: Draw random features (w,b in the paper) based on Gaussian kernel. 
+        # SELF-ADAPTIVE PART: Draw random features (w,b in the paper) based on Gaussian kernel. 
         # 
         # This function is similar to SSI part, but has some argument changes because we want to define
         # the std, number of features for each expert differently.
@@ -226,16 +236,13 @@ class CrazyflieMPC(rclpy.node.Node):
         #   2. The size of the variables omega = (self.n_rf, n_features).
         #      Length of input mask is the actual number of features used for learning. 
         # 
-        # omega = ...
-        # b = ... 
-
-
-        
+        omega = np.random.normal(loc = 0.0, scale = self.kernel_std, size = (self.n_rf, n_features))
+        b = np.random.uniform(low = 0.0, high = 2*np.pi, size = self.n_rf)
 
         return omega, b
 
 
-    # [TODO] PART 3: Parse the ROS2 position messages. Make sure to use given variable names.
+    # PART 3: Parse the ROS2 position messages. Make sure to use given variable names.
     # 
     # NOTE: 
     # - Position is a Python list (not numpy array) containing the (x,y,z coordinates).
@@ -247,31 +254,57 @@ class CrazyflieMPC(rclpy.node.Node):
     #   3. Be sure to wrap the attitude angles between -pi to +pi. 
 
     def _pose_msg_callback(self, msg: PoseStamped):
-        
-        # self.position = ...  
-        # self.attitude = ...
+        # Extract position
+        self.position = [
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        ]
 
-        # return # remove this statement after finishing this part 
+        # Convert quaternion to Euler angles
+        angles = list(tf_transformations.euler_from_quaternion([
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w
+        ]))
 
-        
+        # Wrap angles to the range (-pi, pi)
+        for i, angle in enumerate(angles):
+            angles[i] = np.arctan2(np.sin(angle), np.cos(angle))
 
-        #### SSI Part: New additions
-        self.current_time_stamp = msg.header.stamp
-
+        # Store as list (roll, pitch, yaw)
+        self.attitude = angles
+    
     def _twist_msg_callback(self, msg: TwistStamped):
-        # self.velocity = ...
-
-        return # remove this statement after finishing this part 
+        self.velocity = [msg.twist.linear.x,
+                        msg.twist.linear.y,
+                        msg.twist.linear.z] 
 
 
     #### NEW
     def _target_pose_msg_callback(self, msg: PoseStamped):
-        # [TODO] SELF-ADAPTIVE PART: Parse the ROS2 target position messages.
+        # SELF-ADAPTIVE PART: Parse the ROS2 target position messages.
         #
-        # self.target_position = ...  
-        # self.target_attitude = ...
+        # self.target_position = ...
+        self.target_position = [msg.pose.position.x, 
+                                msg.pose.position.y,
+                                msg.pose.position.z]  
         
-        return # remove this statement after finishing this part
+        # self.target_attitude = ...
+        angles = list(tf_transformations.euler_from_quaternion([
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w
+        ]))
+
+        # Wrap angles to the range (-pi, pi)
+        for i, angle in enumerate(angles):
+            angles[i] = np.arctan2(np.sin(angle), np.cos(angle))
+
+        # Store as list (roll, pitch, yaw)
+        self.target_attitude = angles
 
     def start_trajectory(self, msg):
         self.trajectory_changed = True
@@ -304,7 +337,7 @@ class CrazyflieMPC(rclpy.node.Node):
         
     
 
-    # [TODO] PART 5: Implement the cmd_attitude_setpoint function to publish attitude setpoint commands.
+    # PART 5: Implement the cmd_attitude_setpoint function to publish attitude setpoint commands.
     # Instructions:
     # - Create an AttitudeSetpoint message
     # - Set the roll, pitch, yaw_rate, and thrust fields from the input parameters
@@ -313,7 +346,19 @@ class CrazyflieMPC(rclpy.node.Node):
     #       ae740_crazyflie_sim/ros2_ws/src/crazyswarm2/crazyflie_interfaces/msg/AttitudeSetpoint.msg
     #
     # def cmd_attitude_setpoint(...
+    def cmd_attitude_setpoint(self, roll: float, pitch: float, yaw_rate: float, thrust: int):
+        # intialize message
+        attitude_setpoint_msg = AttitudeSetpoint()
+        
+        # set message fields
+        attitude_setpoint_msg.roll = roll
+        attitude_setpoint_msg.pitch = pitch
+        attitude_setpoint_msg.yaw_rate = yaw_rate
+        attitude_setpoint_msg.thrust = thrust
 
+        # publish message
+        self.attitude_setpoint_pub.publish(attitude_setpoint_msg)
+        return
 
     def thrust_to_pwm(self, collective_thrust: float) -> int:
         # omega_per_rotor = 7460.8*np.sqrt((collective_thrust / 4.0))
@@ -325,7 +370,7 @@ class CrazyflieMPC(rclpy.node.Node):
             return int(max(min(24.5307*(6462.1*np.sqrt((collective_thrust / 4.0)) - 380.8359), 65535),0))
         
     def adaptive_expert_selection(self):
-        # [TODO]: SELF-ADAPTIVE PART: Implement the adaptive expert selection strategy here.
+        # SELF-ADAPTIVE PART: Implement the adaptive expert selection strategy here.
         # 
         # Hints:
         #   1. You can use numpy.random.choice() function to sample from a discrete probability distribution
@@ -339,10 +384,16 @@ class CrazyflieMPC(rclpy.node.Node):
         #      the mean error to reduce the noise at each step (due to update rate of 50Hz)
         #
         # selected_expert_idx = ...  # index of the selected expert to return
-        return selected_expert_idx
-        
-        
 
+
+        Y = np.exp(-self.a * np.array(self.list_of_expert_error_arrays))
+        r_t = (self.opt_dt/np.sqrt(self.mpc_N))) * Y * self.list_of_expert_error_arrays
+
+        self.S_t = self.gamma * self.S_t + r_t
+        self.P_t = np.exp(self.eta * self.S_t) / np.sum(np.exp(self.eta * self.S_t))
+
+        selected_expert_idx = np.random.choice(list(range(len(self.mpc_expert_list))),p = self.P_t, size=1)
+        return selected_expert_idx
         
 
     def _mpc_solver_loop(self):
@@ -364,7 +415,7 @@ class CrazyflieMPC(rclpy.node.Node):
             dt = (self.current_time_stamp.nanosec - self.last_time_stamp.nanosec)/1e9 + (self.current_time_stamp.sec - self.last_time_stamp.sec)
             self.last_time_stamp = self.current_time_stamp # for the next iteration
 
-        # [TODO] SELF-ADAPTIVE PART: Main solver loop for update (learning) step, expert error (AS), and solving the MPC problem.
+        # SELF-ADAPTIVE PART: Main solver loop for update (learning) step, expert error (AS), and solving the MPC problem.
         #                   
         # Hints: 
         #   1. Remember that self.position etc. are all python lists (not numpy arrays)
@@ -377,30 +428,33 @@ class CrazyflieMPC(rclpy.node.Node):
         # 
         # x0 = ... (numpy array (size=9) of the crazyflie state -> position, velocity, attitude)
         # target_pose = ... (numpy array (size=3) of the target position)
-        #
+        x0=np.array(self.position + self.velocity + self.attitude)
+        target_pose=np.array(self.target_position)
+        
         # COMPLETED CODE
-        # for expert_idx, expert in enumerate(self.mpc_expert_list):
-        #     # # Update the alpha value based on the current observed state
-        #     expert.update_step(dt, x_now=x0, target_now=target_pose) # 'dt' is the time elapsed from the previous update
-        #
-        #     # # get prediction error metric for the expert
-        #     self.expert_error_array[expert_idx] = expert.get_prediction_error() 
-        #
-        # # # list of expert errors
-        # self.list_of_expert_error_arrays.append(self.expert_error_array.copy())
-        #
-        #
+        for expert_idx, expert in enumerate(self.mpc_expert_list):
+            # # Update the alpha value based on the current observed state
+            expert.update_step(dt, x_now=x0, target_now=target_pose) # 'dt' is the time elapsed from the previous update
+        
+            # # get prediction error metric for the expert
+            self.expert_error_array[expert_idx] = expert.get_prediction_error() 
+        
+        # # list of expert errors
+        self.list_of_expert_error_arrays.append(self.expert_error_array.copy())
+        
+        
         # #### CREATE CONDITION WHEN TO UPDATE THE EXPERT (this is based on self.selection_interval)
         # #### We want that this does not happen at every iteration of this loop, but rather at a lower frequency
         # #### This interval is defined by self.selection_interval variable (0.25 seconds for example)
         # #### You will use self.adaptive_expert_selection() function here
         # if ...
-        #
+        if t - self.last_selection_time >= self.selection_interval:
+            self.selected_expert_idx = self.adaptive_expert_selection()
+            self.last_selection_time = t
+            self.list_of_expert_error_arrays = [] 
         # SOLVER CALL AT EVERY ITERATION
-        # status, x_mpc, u_mpc, yref, yref_e = ... 
+        status, x_mpc, u_mpc, yref, yref_e = self.mpc_expert_list[self.selected_expert_idx].solve_mpc(x0, target_pose, dt)
     
-
-
         self.control_queue = deque(u_mpc)
 
         if self.plot_trajectory:
