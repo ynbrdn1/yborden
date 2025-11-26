@@ -236,7 +236,7 @@ class CrazyflieMPC(rclpy.node.Node):
         #   2. The size of the variables omega = (self.n_rf, n_features).
         #      Length of input mask is the actual number of features used for learning. 
         # 
-        omega = np.random.normal(loc = 0.0, scale = self.kernel_std, size = (self.n_rf, n_features))
+        omega = np.random.normal(loc = 0.0, scale = kernel_std, size = (self.n_rf, n_features))
         b = np.random.uniform(low = 0.0, high = 2*np.pi, size = self.n_rf)
 
         return omega, b
@@ -387,7 +387,7 @@ class CrazyflieMPC(rclpy.node.Node):
 
 
         Y = np.exp(-self.a * np.array(self.list_of_expert_error_arrays))
-        r_t = (self.opt_dt/np.sqrt(self.mpc_N))) * Y * self.list_of_expert_error_arrays
+        r_t = (self.opt_dt/np.sqrt(self.mpc_N)) * Y * self.list_of_expert_error_arrays
 
         self.S_t = self.gamma * self.S_t + r_t
         self.P_t = np.exp(self.eta * self.S_t) / np.sum(np.exp(self.eta * self.S_t))

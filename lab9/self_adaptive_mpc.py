@@ -416,9 +416,8 @@ class SelfAdaptiveMPC:
                 phi = np.cos(self.omega.dot(z_np) + self.b)  # (n_rf,)
 
                 # predict velocity and integrate to get next position
-                pred_vel = self.alpha_last.dot(phi)  # (3,)
-                target_next = predicted_traj[:, i] + pred_vel * self.mpc_dt
-
+                pred_pos = self.alpha_last.dot(phi)  # (3,)
+                target_next = pred_pos
                 predicted_traj[:, i+1] = target_next
 
                 # actual trajectory: actual target values are available in dense log
@@ -502,9 +501,9 @@ class SelfAdaptiveMPC:
             for i in range(N):
                 z_np = np.asarray(past_memory_vector).reshape(-1)
                 phi = np.cos(self.omega.dot(z_np) + self.b)  # (n_rf,)
-                pred_vel = alpha_in.dot(phi)  # (3,)
-                target_next = predicted_positions[:, i] + pred_vel * self.mpc_dt
+                target_next = alpha_in.dot(phi)
                 predicted_positions[:, i+1] = target_next
+                pred_vel = (predicted_positions[:, i+1] - predicted_positions[:, i]) / self.mpc_dt
 
                 # Fill yref for this step (nx entries). Put predicted target in position entries and predicted velocity in velocity slots
                 y = np.zeros(nx)
