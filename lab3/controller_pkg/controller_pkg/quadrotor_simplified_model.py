@@ -1,5 +1,9 @@
-from casadi import MX, vertcat, horzcat, diag, inv_minor, cross, sqrt, cos, sin, times
+from casadi import MX, vertcat, horzcat, diag, inv_minor, cross, sqrt, cos, sin, mtimes
 import numpy as np
+
+
+
+
 
 class QuadrotorSimplified:
     def __init__(self, mass, arm_length, Ixx, Iyy, Izz, tau, gravity=9.80665):
@@ -48,10 +52,11 @@ class QuadrotorSimplified:
         )
 
         thrust_b = vertcat(0, 0, thrust)
-        acc = (1/self.mass) * times(R, thrust_b) - vertcat(0, 0, self.gravity)
+        acc = (1/self.mass) * mtimes(R, thrust_b) - vertcat(0, 0, self.gravity)
         vxdot = acc[0]
         vydot = acc[1]
         vzdot = acc[2]
+        print(acc)
 
         #Attitude dynamics
         rolldot = (roll_c - roll) / self.tau

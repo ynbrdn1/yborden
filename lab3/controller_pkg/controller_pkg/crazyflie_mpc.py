@@ -50,6 +50,7 @@ class CrazyflieMPC(rclpy.node.Node):
 
         self.flight_mode = 'idle'
         self.trajectory_t0 = self.get_clock().now()
+        # self.trajectory_type = 'lemniscate'
         self.trajectory_type = 'horizontal_circle'
         self.plot_trajectory = True
         
@@ -93,14 +94,14 @@ class CrazyflieMPC(rclpy.node.Node):
 
         # (c) MPC solution path publisher
         self.mpc_solution_path_pub = self.create_publisher(Path,
-                                                          f'{prefix}/mpc_solution_path')
+                                                          f'{prefix}/mpc_solution_path',10)
         # topic type -> Path
         # topic name -> {prefix}/mpc_solution_path
         # publisher variable -> self.mpc_solution_path_pub
 
         # (d) Attitude setpoint command publisher
         self.attitude_setpoint_pub = self.create_publisher(AttitudeSetpoint,
-                                                          f'{prefix}/cmd_attitude_setpoint')
+                                                          f'{prefix}/cmd_attitude_setpoint',10)
         # topic type -> AttitudeSetpoint
         # topic name -> {prefix}/cmd_attitude_setpoint
         # publisher variable -> self.attitude_setpoint_pub
@@ -138,9 +139,10 @@ class CrazyflieMPC(rclpy.node.Node):
                                                                 msg.pose.orientation.z,
                                                                 msg.pose.orientation.w])
         # wrap angles
+        angles_transformed=[0]*3
         for i, angle in enumerate(angles):
-            angles[i] = np.arctan2(np.sin(angle), np.cos(angle))
-        self.attitude = list(angles)
+            angles_transformed[i] = np.arctan2(np.sin(angle), np.cos(angle))
+        self.attitude = list(angles_transformed)
 
     
     def _twist_msg_callback(self, msg: TwistStamped):
@@ -204,17 +206,10 @@ class CrazyflieMPC(rclpy.node.Node):
             vyr = a * omega * np.cos(omega * t)
             vzr = 0.0
         
-        elif self.trajectory_type == "target_tracking":
-            pxr = self.target_position[0]
-            pyr = self.target_position[1]
-            pzr = self.target_position[2]
-            vxr = 0.0
-            vyr = 0.0
-            vzr = 0.0
 
         elif self.trajectory_type == "lemniscate":
             a = 1.0
-            b = 0.5 * tanh(0.1 * t)
+            b = 0.5 * np.tanh(0.1 * t)
 
             pxr = x_start + a * np.sin(b * t)
             pyr = y_start + a * np.sin(b * t) * np.cos(b * t)  
@@ -310,6 +305,7 @@ class CrazyflieMPC(rclpy.node.Node):
         
 
         self.control_queue = deque(u_mpc)
+        # print(u_mpc)
 
         if self.plot_trajectory:
             mpc_solution_path = Path()
@@ -338,7 +334,10 @@ class CrazyflieMPC(rclpy.node.Node):
             self.cmd_attitude_setpoint(0.,0.,0.,0)
 
         if self.control_queue is not None:
+
             control = self.control_queue.popleft()
+            # control = [0,0,0,1]
+
             thrust_pwm = self.thrust_to_pwm(control[3])
             yawrate = 3.*(np.degrees(self.attitude[2]))
             self.cmd_attitude_setpoint(np.degrees(control[0]), 

@@ -57,31 +57,27 @@ class TrajectoryTrackingMpc:
         # 
 
         # need to tune cost values
-        cost_px=1
-        cost_py=1
-        cost_pz=1
-        cost_vx=1
-        cost_vy=1
-        cost_vz=1
+        cost_px=50
+        cost_py=50
+        cost_pz=50
+        cost_vx=20
+        cost_vy=20
+        cost_vz=15
         cost_roll=1
         cost_pitch=1
         cost_yaw=1
         Q=np.diag([cost_px,cost_py,cost_pz,cost_vx,cost_vy,cost_vz,cost_roll,cost_pitch,cost_yaw])
-        cost_roll_c=1
-        cost_pitch_c=1
+        cost_roll_c=10
+        cost_pitch_c=10
         cost_yaw_c=1
-        cost_thrust=1
+        cost_thrust=20
         R=np.diag([cost_roll_c,cost_pitch_c,cost_yaw_c,cost_thrust])
         W=block_diag(Q,R)
-
-        #print(W)
-        print(Q)
-        print(R)
 
         # values based on guess
         max_angle = np.radians(30)
         max_thrust = 0.6695 # from max pwm
-        max_height = 100
+        max_height = 20
         max_velocity = 50
         max_X = 100
         max_Y = 100
@@ -101,10 +97,11 @@ class TrajectoryTrackingMpc:
         ocp.constraints.ubu = np.array([max_angle, max_angle, np.radians(10), max_thrust])
         ocp.constraints.idxbu = np.array([0,1,2,3])
 
-        ocp.constraints.lbx = np.array([-max_X, -max_Y, 0., -max_velocity, -max_velocity, -max_velocity, -max_angle, -max_angle, -np.radians(180)])
+        ocp.constraints.lbx = np.array([-max_X, -max_Y, 0, -max_velocity, -max_velocity, -max_velocity, -max_angle, -max_angle, -np.radians(180)])
         ocp.constraints.ubx = np.array([max_X, max_Y, max_height, max_velocity, max_velocity, max_velocity, max_angle, max_angle, np.radians(180)])
         ocp.constraints.idxbx = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8])
         
+
         # initial state
         ocp.constraints.x0 = np.zeros(9)
 
