@@ -95,20 +95,20 @@ class CrazyflieMPC(rclpy.node.Node):
         # [TODO] tune parameters (lr, kernel_std) for first expert if needed
         name = 'expert_1'
         kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        kernel_std = 1 # standard deviation ("accurate expert")
-        lr = 0.25 # learning rate (from Figure 8)
+        kernel_std = 0.1 # standard deviation ("accurate expert")
+        lr = 0.5 # learning rate (from Figure 8)
         mh = 4 # memory horizon for past target position history (3-5 based on instructions)
         p_type = 'single_learner' # predictor type BONUS PART: 'multiple_learners'
         self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
 
         ### [TODO] uncomment params for second expert once we get one to work
-        # name = 'expert_2'
-        # kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        # kernel_std = 0.1 # standard deviation ("agile expert")
-        # lr = 0.5 # learning rate (from Figure 8)
-        # mh = 4 # memory horizon for past target position history
-        # p_type = 'single_learner' # predictor type
-        # self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
+        name = 'expert_2'
+        kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
+        kernel_std = 1 # standard deviation ("agile expert")
+        lr = 0.25 # learning rate (from Figure 8)
+        mh = 4 # memory horizon for past target position history
+        p_type = 'single_learner' # predictor type
+        self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
 
         # # numpy array to store the expert error at each update step (at rate 50Hz)
         self.expert_error_array = np.zeros(len(self.mpc_expert_list))
@@ -369,51 +369,24 @@ class CrazyflieMPC(rclpy.node.Node):
         elif self.motors == Motors.MOTOR_UPGRADE:
             return int(max(min(24.5307*(6462.1*np.sqrt((collective_thrust / 4.0)) - 380.8359), 65535),0))
         
-    def adaptive_expert_selection(self):
-    # If no expert errors collected, keep current expert
-        if len(self.list_of_expert_error_arrays) == 0:
-            return self.selected_expert_idx
-
-    # Convert to array: shape (T, n_experts)
-        errors_history = np.array(self.list_of_expert_error_arrays, dtype=float)
-
-    # Aggregate across time -> per-expert scalar (choose mean or sum)
-    # Use mean to reduce noise
-        per_expert_loss = np.mean(errors_history, axis=0)  # shape (n_experts,)
-
-    # Ensure S_t has correct shape (n_experts,)
-        num_experts = len(self.mpc_expert_list)
-        if self.S_t.shape != (num_experts,):
-            self.S_t = np.zeros(num_experts, dtype=float)
-
-    # Compute pseudo-reward / loss update per expert (all arrays are 1-D now)
-        Y = np.exp(-self.a * per_expert_loss)              # shape (n_experts,)
-        r_t = (self.opt_dt / np.sqrt(self.mpc_N)) * Y * per_expert_loss  # shape (n_experts,)
-
-    # Update discounted sum of losses S_t (per expert)
-        self.S_t = self.gamma * self.S_t + r_t            # shape (n_experts,)
-
-    # Update probability vector and normalize
-        expS = np.exp(self.eta * self.S_t)
-        if np.sum(expS) == 0 or np.any(np.isnan(expS)):
-        # fallback uniform
-            self.P_t = np.ones(num_experts, dtype=float) / num_experts
-        else:
-            self.P_t = expS / np.sum(expS)
-
-    # Defensive: make sure P_t is 1-D and matches number of experts
-        self.P_t = np.asarray(self.P_t, dtype=float).ravel()
-        if self.P_t.size != num_experts:
-            self.P_t = np.ones(num_experts, dtype=float) / num_experts
-
-    # debug prints
-        print("len(mpc_expert_list):", num_experts)
-        print("len(P_t):", len(self.P_t))
-        print("P_t:", self.P_t)
-
-    # select expert
-        selected_expert_idx = np.random.choice(num_experts, p=self.P_t)
-        return selected_expert_idx
+        def adaptive_expert_selection(self):
+        # [TODO]: SELF-ADAPTIVE PART: Implement the adaptive expert selection strategy here.
+        # 
+        # Hints:
+        #   1. You can use numpy.random.choice() function to sample from a discrete probability distribution
+        #   2. Make sure to use self.P_t as the probability distribution over experts
+        #   3. Important variables:
+        #       self.P_t: probability distribution over experts
+        #       self.list_of_expert_error_arrays: list of expert error arrays during an interval
+        #       self.a, self.gamma, self.eta: tuning parameters
+        #   4. Read the 'Algorithm Parameters' subsection in the Experiments section of the paper
+        #   5. Calculate the loss for each expert based on normalized loss, calculated from 
+        #      the mean error to reduce the noise at each step (due to update rate of 50Hz)
+        #
+            expert_indeces = list(range(len(self.mpc_expert_list)))
+            selected_expert_idx = np.random.choice(expert_indeces,p=self.P_t)  # index of the selected expert to return
+            print("selected:",selected_expert_idx,"probs:",self.Pt)
+            return selected_expert_idx
         
 
     def _mpc_solver_loop(self):

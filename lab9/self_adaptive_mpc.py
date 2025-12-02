@@ -97,8 +97,7 @@ class SelfAdaptiveMPC:
         #
         #   Keep the matrix sizes, and terms in mind to understand how the final prediction model works.
         #
-
-        # calculate p_dot
+                # calculate p_dot
         p_dot=self.v
 
         # calculate v_dot
@@ -168,8 +167,6 @@ class SelfAdaptiveMPC:
         # max_velocity = ... [m/s]
         # max_X = ... [m]
         # max_Y = ... [m]
-
-        # need to tune cost values
         cost_px=50
         cost_py=50
         cost_pz=50
@@ -194,6 +191,7 @@ class SelfAdaptiveMPC:
         max_velocity = 50
         max_X = 100
         max_Y = 100
+
 
         ocp.cost.cost_type = 'LINEAR_LS'
         ocp.cost.Vx = np.vstack([np.identity(nx), np.zeros((nu,nx))])
@@ -255,7 +253,7 @@ class SelfAdaptiveMPC:
                 self.target_last = target_now
             if self.predictor_type=='multiple_learners':
                 raise NotImplementedError('multiple_learners predictor type not implemented yet')
-
+        
         if dt == 0: # to avoid any errors
             dt = self.horizon/self.num_steps
 
@@ -278,59 +276,24 @@ class SelfAdaptiveMPC:
         # - In the end, store the updated value of alpha as alpha_out.
         # - The time elapsed from the previous update 'dt' is important to make sure 
 
-        # if self.predictor_type=='single_learner':
-        #     # update target pose memory with a new entry
-        #     self.target_dense_pose_log = np.roll(self.target_dense_pose_log, shift=1, axis=1)
-        #     self.target_dense_pose_log[:,0] = np.copy(target_now[:3]) # only x,y,z position
-        #
-        #     # construct target memory vector starting from 2nd index to compare with most recent target position
-        #     start = 1
-        #     step = int(self.step_size)
-        #     num_indices = int(self.memory_horizon)
-        #     target_memory_vector = self.target_dense_pose_log[:, start:start+num_indices*step:step].T.flatten()  # shape (memory_horizon*3, )
-        #   
-        #     # # ... intermediate steps ...
-        #    
-        #     alpha_out = ... # updated alpha after one step of RLS update
-        #
-        # if self.predictor_type=='multiple_learners':
-        #     raise NotImplementedError('multiple_learners predictor type not implemented yet')
-        
         if self.predictor_type=='single_learner':
             # update target pose memory with a new entry
             self.target_dense_pose_log = np.roll(self.target_dense_pose_log, shift=1, axis=1)
             self.target_dense_pose_log[:,0] = np.copy(target_now[:3]) # only x,y,z position
-
+        
             # construct target memory vector starting from 2nd index to compare with most recent target position
             start = 1
             step = int(self.step_size)
             num_indices = int(self.memory_horizon)
-            # guard against indexing issues
-            end_idx = start + num_indices*step
-            target_memory_vector = self.target_dense_pose_log[:, start:end_idx:step].T.flatten()  # shape (memory_horizon*3, )
+            target_memory_vector = self.target_dense_pose_log[:, start:start+num_indices*step:step].T.flatten()  # shape (memory_horizon*3, )
 
-            # construct RFF features phi = cos(w^T z + b)
-            # Here we use target_memory_vector as z (shape: target_memory_dim,)
-            z = target_memory_vector
-            # ensure shapes: omega (n_rf, input_dim), b (n_rf,)
-            # convert z to 1D numpy
-            z_np = np.asarray(z).reshape(-1)
-            phi = np.cos(self.omega.dot(z_np) + self.b)  # shape (n_rf,)
-
-            # prediction from current alpha
-            # alpha_in shape (out_dim, n_rf)
-            pred_pos = alpha_in.dot(phi)  # shape (out_dim,)
-            y_t = target_now[:3]
-            error = y_t - pred_pos
-            grad = -self.learning_rate * (error.reshape(-1,1) @ phi.reshape(1,-1))
-
-            # simple gradient update (OGD) using learning_rate
-            # alpha <- alpha + lr * error[:,None] * phi[None,:]
-            alpha_out = alpha_in - grad
+            Phi = cos(self.omega @ target_memory_vector + self.b)
+            h = 1/self.n_rf * alpha_in @ Phi
+            grad = -2/self.n_rf * (target_now - h) @ Phi.T
+            alpha_out = alpha_in - (self.learning_rate * grad)
             
-        else:
+        if self.predictor_type=='multiple_learners':
             raise NotImplementedError('multiple_learners predictor type not implemented yet')
-        
 
         # log latest values
         self.alpha_last = np.copy(alpha_out)
@@ -353,46 +316,9 @@ class SelfAdaptiveMPC:
         #   between the velocity of predicted and actual target positions over the horizon. 
         # - Look at the 'Algorithm parameters' in Experiments section and 'AS' module in the paper
 
-        # if self.predictor_type=='single_learner':
-        #     # # past target position -> one mpc horizon back
-        #     target_past = self.target_dense_pose_log[:, int(self.num_steps*self.step_size)]
-
-        #     # reconstruct target trajectory starting from past position
-        #     predicted_traj = np.zeros((3, self.num_steps+1)) 
-        #     actual_traj = np.zeros((3, self.num_steps+1))
-        #     predicted_traj[:,0] = target_past[:3]
-        #     actual_traj[:,0] = target_past[:3]
-
-        #     start = int(2*self.num_steps*self.step_size) # starting index for 'past' memory vector
-        #     # # IMP: this is start vector for memory at the time of 'target_past', so 2*mpc_horizon back
-        #     step = int(self.step_size)
-        #     num_indices = int(self.memory_horizon)
-        #     past_memory_vector = self.target_dense_pose_log[:, start:start+num_indices*step:step].T.flatten() # flatten combines row first
-
-        #     # iterate over mpc horizon
-        #     for i in range(self.num_steps):
-        #         # # ... intermediate steps ...          
-        #         target_next = ...
-
-        #         predicted_traj[:,i+1] = ...
-        #         actual_traj[:,i+1] = ...
-        #         past_memory_vector = ... # shift by 3 for x,y,z and then add the latest predicted position
-            
-        #     # compute error as difference in increments
-        #     pred_increments = ...
-        #     actual_increments = ...
-        #     vel_error_matrix = (pred_increments - actual_increments)/self.mpc_dt  
-        #     overall_rms_error = ...  # scalar that depicts how much error in velocity prediction over the mpc horizon
-
-        # if self.predictor_type=='multiple_learners':
-        #     raise NotImplementedError('multiple_learners predictor type not implemented yet')
-
         if self.predictor_type=='single_learner':
             # # past target position -> one mpc horizon back
-            idx_past = int(self.num_steps * self.step_size)
-            if idx_past >= self.target_dense_pose_log.shape[1]:
-                idx_past = self.target_dense_pose_log.shape[1]-1
-            target_past = self.target_dense_pose_log[:, idx_past]
+            target_past = self.target_dense_pose_log[:, int(self.num_steps*self.step_size)]
 
             # reconstruct target trajectory starting from past position
             predicted_traj = np.zeros((3, self.num_steps+1)) 
@@ -400,46 +326,33 @@ class SelfAdaptiveMPC:
             predicted_traj[:,0] = target_past[:3]
             actual_traj[:,0] = target_past[:3]
 
-            # starting index for memory vector at time of target_past (use 2*mpc_horizon back as in comment)
-            start = int(2*self.num_steps*self.step_size)
-            if start + int(self.memory_horizon)*int(self.step_size) >= self.target_dense_pose_log.shape[1]:
-                # clamp start
-                start = max(0, self.target_dense_pose_log.shape[1] - int(self.memory_horizon)*int(self.step_size) - 1)
+            start = int(2*self.num_steps*self.step_size) # starting index for 'past' memory vector
+            # # IMP: this is start vector for memory at the time of 'target_past', so 2*mpc_horizon back
             step = int(self.step_size)
             num_indices = int(self.memory_horizon)
-            past_memory_vector = self.target_dense_pose_log[:, start:start+num_indices*step:step].T.flatten()
-
+            past_memory_vector = self.target_dense_pose_log[:, start:start+num_indices*step:step].T.flatten() # flatten combines row first
+            alpha_in = self.alpha_last
             # iterate over mpc horizon
             for i in range(self.num_steps):
-                # compute features from past_memory_vector
-                z_np = np.asarray(past_memory_vector).reshape(-1)
-                phi = np.cos(self.omega.dot(z_np) + self.b)  # (n_rf,)
+                
+                # # ... intermediate steps ...          
+                Phi = cos(self.omega @ past_memory_vector + self.b)
+                h = 1/self.n_rf * alpha_in @ Phi
+                target_next = h.T
+                target_next_actual = self.target_dense_pose_log[:, int(self.num_steps*self.step_size)+i]
+                predicted_traj[:,i+1] = np.copy(target_next)
+                actual_traj[:,i+1] = np.copy(target_next_actual)
 
-                # predict velocity and integrate to get next position
-                pred_pos = self.alpha_last.dot(phi)  # (3,)
-                target_next = pred_pos
-                predicted_traj[:, i+1] = target_next
-
-                # actual trajectory: actual target values are available in dense log
-                # index in dense log corresponding to this future time:
-                # we take the value at (idx_past - self.num_steps*self.step_size + i*self.step_size)
-                actual_idx = idx_past - int(self.num_steps*self.step_size) + (i+1)*step
-                # clamp
-                actual_idx = np.clip(actual_idx, 0, self.target_dense_pose_log.shape[1]-1)
-                actual_traj[:, i+1] = self.target_dense_pose_log[:, actual_idx]
-
-                # update past_memory_vector: shift left by 3 and append latest predicted position
-                past_memory_vector = np.roll(past_memory_vector, -3)
-                past_memory_vector[-3:] = target_next
-
+                past_memory_vector = np.roll(past_memory_vector, shift=3)
+                past_memory_vector[:3] = target_next 
             # compute error as difference in increments
-            pred_increments = np.diff(predicted_traj, axis=1)
-            actual_increments = np.diff(actual_traj, axis=1)
-            vel_error_matrix = (pred_increments - actual_increments) / self.mpc_dt
-            overall_rms_error = np.sqrt(np.mean(vel_error_matrix**2))
-        else:
+            pred_increments = np.diff(predicted_traj)
+            actual_increments = np.diff(actual_traj)
+            vel_error_matrix = (pred_increments - actual_increments)/self.mpc_dt 
+            overall_rms_error = np.sqrt(self.mpc_dt**2 * np.sum(vel_error_matrix ** 2) / self.num_steps) # scalar that depicts how much error in velocity prediction over the mpc horizon
+    
+        if self.predictor_type=='multiple_learners':
             raise NotImplementedError('multiple_learners predictor type not implemented yet')
-
 
         return overall_rms_error # scalar
 
@@ -480,50 +393,19 @@ class SelfAdaptiveMPC:
             # - In the end, store the final predicted target state in yref_e variable.
             # - Note that yref has shape (nx, N) and yref_e has shape (nx, ), where nx=9, hence fill appropriately.
 
-            # for i in range(N):
-            #     # # ... intermediate steps ...
-            #     target_next = ...
-            #     # # ... intermediate steps ...
-            #     yref[...] = ...
-            #     target_in = np.copy(target_next)
-            #     # roll memory vector and update with latest predicted position
-            #     target_memory_vector = ... # shift by 3 for x,y,z and then add the latest predicted position
-                
-            # yref_e = ... # final predicted target state 
-
-
-            # We'll predict positions using alpha_in and the RFF phi built from target_memory_vector
-            predicted_positions = np.zeros((3, N+1))
-            # initialize first predicted position as the most recent actual
-            predicted_positions[:,0] = target_memory_vector[-3:] if target_memory_vector.size>=3 else target_now[:3]
-
-            past_memory_vector = np.copy(target_memory_vector)
             for i in range(N):
-                z_np = np.asarray(past_memory_vector).reshape(-1)
-                phi = np.cos(self.omega.dot(z_np) + self.b)  # (n_rf,)
-                target_next = alpha_in.dot(phi)
-                predicted_positions[:, i+1] = target_next
-                pred_vel = (predicted_positions[:, i+1] - predicted_positions[:, i]) / self.mpc_dt
-
-                # Fill yref for this step (nx entries). Put predicted target in position entries and predicted velocity in velocity slots
-                y = np.zeros(nx)
-                y[0:3] = target_next
-                y[3:6] = pred_vel
-                # leave euler angles as zeros (we don't predict them)
-                yref[:, i] = y
-
-                # update memory vector: shift and append predicted position
-                if past_memory_vector.size >= 3:
-                    past_memory_vector = np.roll(past_memory_vector, -3)
-                    past_memory_vector[-3:] = target_next
-                else:
-                    # fallback
-                    past_memory_vector = np.tile(target_next, num_indices).flatten()
-
-            # final reference (terminal)
-            yref_e = np.zeros(nx)
-            yref_e[0:3] = predicted_positions[:, -1]
-            yref_e[3:6] = (predicted_positions[:, -1] - predicted_positions[:, -2]) / self.mpc_dt
+                # # ... intermediate steps ...
+                Phi = cos(self.omega @ target_memory_vector + self.b)
+                h = 1/self.n_rf * alpha_in @ Phi
+                target_next = h.T
+                # # ... intermediate steps ...
+                yref[:3,i] = target_next
+                target_in = np.copy(target_next)
+                # roll memory vector and update with latest predicted position
+                #target_memory_vector = ... # shift by 3 for x,y,z and then add the latest predicted position
+                target_memory_vector = np.roll(target_memory_vector, shift=3)
+                target_memory_vector[:3] = target_in 
+            yref_e = yref[:,-1] # final predicted target state 
 
          
         if self.predictor_type=='multiple_learners':
