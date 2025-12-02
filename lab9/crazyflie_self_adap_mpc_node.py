@@ -92,21 +92,21 @@ class CrazyflieMPC(rclpy.node.Node):
 
         # # All the experts go here sequantially by calling self.init_expert() function
 
-        # [TODO] tune parameters (lr, kernel_std) for first expert if needed
-        name = 'expert_1'
-        kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        kernel_std = 0.1 # standard deviation ("accurate expert")
-        lr = 0.5 # learning rate (from Figure 8)
-        mh = 4 # memory horizon for past target position history (3-5 based on instructions)
-        p_type = 'single_learner' # predictor type BONUS PART: 'multiple_learners'
-        self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
+        # tune parameters (lr, kernel_std) for first expert if needed
+        # name = 'expert_1'
+        # kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
+        # kernel_std = 0.1 # standard deviation ("agile expert")
+        # lr = 0.5 # learning rate (from Figure 8)
+        # mh = 3 # memory horizon for past target position history (3-5 based on instructions)
+        # p_type = 'single_learner' # predictor type BONUS PART: 'multiple_learners'
+        # self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
 
-        ### [TODO] uncomment params for second expert once we get one to work
+        # uncomment params for second expert once we get one to work
         name = 'expert_2'
         kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        kernel_std = 1 # standard deviation ("agile expert")
+        kernel_std = 1 # standard deviation ("accurate expert")
         lr = 0.25 # learning rate (from Figure 8)
-        mh = 4 # memory horizon for past target position history
+        mh = 3 # memory horizon for past target position history
         p_type = 'single_learner' # predictor type
         self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
 
@@ -369,7 +369,7 @@ class CrazyflieMPC(rclpy.node.Node):
         elif self.motors == Motors.MOTOR_UPGRADE:
             return int(max(min(24.5307*(6462.1*np.sqrt((collective_thrust / 4.0)) - 380.8359), 65535),0))
         
-        def adaptive_expert_selection(self):
+    def adaptive_expert_selection(self):
         # [TODO]: SELF-ADAPTIVE PART: Implement the adaptive expert selection strategy here.
         # 
         # Hints:
@@ -383,10 +383,22 @@ class CrazyflieMPC(rclpy.node.Node):
         #   5. Calculate the loss for each expert based on normalized loss, calculated from 
         #      the mean error to reduce the noise at each step (due to update rate of 50Hz)
         #
-            expert_indeces = list(range(len(self.mpc_expert_list)))
-            selected_expert_idx = np.random.choice(expert_indeces,p=self.P_t)  # index of the selected expert to return
-            print("selected:",selected_expert_idx,"probs:",self.Pt)
-            return selected_expert_idx
+        
+        # update S_t
+        rpt_array = np.exp(-self.a * np.array(self.list_of_expert_error_arrays))
+        rpt_avg = np.mean(rpt_array,axis = 0)
+        S_t_next = self.gamma * self.S_t + rpt_avg
+        self.S_t = np.copy(S_t_next)
+
+        # update P_t
+        P_t_next = np.exp(self.eta * S_t_next)/sum(np.exp(self.eta * S_t_next))
+        self.P_t = np.copy(P_t_next)
+
+        # choose next expert    
+        expert_indeces = list(range(len(self.mpc_expert_list)))
+        selected_expert_idx = np.random.choice(expert_indeces,p=self.P_t)  # index of the selected expert to return
+        print("selected:",selected_expert_idx,"probs:",self.P_t)
+        return selected_expert_idx
         
 
     def _mpc_solver_loop(self):
