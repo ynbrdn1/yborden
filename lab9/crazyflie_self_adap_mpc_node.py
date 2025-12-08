@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 from crazyflie_py import *
 import rclpy
@@ -53,7 +54,8 @@ class CrazyflieMPC(rclpy.node.Node):
 
         self.flight_mode = 'idle'
         self.trajectory_t0 = self.get_clock().now()
-        self.trajectory_type = 'lemniscate'
+        # self.trajectory_type = 'lemniscate'
+        self.trajectory_type = 'horizontal_circle'
         self.plot_trajectory = True
         
         self.motors = Motors.MOTOR_CLASSIC # MOTOR_CLASSIC, MOTOR_UPGRADE
@@ -92,27 +94,36 @@ class CrazyflieMPC(rclpy.node.Node):
 
         # # All the experts go here sequantially by calling self.init_expert() function
 
-        # tune parameters (lr, kernel_std) for first expert if needed
-        # name = 'expert_1'
-        # kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        # kernel_std = 0.1 # standard deviation ("agile expert")
-        # lr = 0.5 # learning rate (from Figure 8)
-        # mh = 3 # memory horizon for past target position history (3-5 based on instructions)
-        # p_type = 'single_learner' # predictor type BONUS PART: 'multiple_learners'
-        # self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
-
         # uncomment params for second expert once we get one to work
+        name = 'expert_1'
+        kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
+        kernel_std = 0.5 # standard deviation ("accurate expert")
+        lr = 0.2 # learning rate (from Figure 8)
+        mh = 10 # memory horizon for past target position history
+        p_type = 'single_learner' # predictor type
+        self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
+
         name = 'expert_2'
         kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
-        kernel_std = 1 # standard deviation ("accurate expert")
-        lr = 0.25 # learning rate (from Figure 8)
+        kernel_std = 0.1 # standard deviation ("agile expert")
+        lr = 0.5 # learning rate (from Figure 8)
         mh = 3 # memory horizon for past target position history
         p_type = 'single_learner' # predictor type
         self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
 
+        name = 'expert_3'
+        kernel = 'Gaussian' # kernel type, we only use 'Gaussian' for now
+        kernel_std = 0.3 # standard deviation 
+        lr = 0.3 # learning rate (from Figure 8)
+        mh = 5 # memory horizon for past target position history
+        p_type = 'single_learner' # predictor type
+        self.init_expert(name, kernel, kernel_std, lr, mh, p_type, quadrotor_dynamics, mpc_N, mpc_tf)
+
+
         # # numpy array to store the expert error at each update step (at rate 50Hz)
         self.expert_error_array = np.zeros(len(self.mpc_expert_list))
         self.list_of_expert_error_arrays = [] # a list to store all the expert error arrays over time
+        self.list_of_P_t = []
 
         # # initialize probability distribution over experts
         self.P_t = np.ones(len(self.mpc_expert_list)) / len(self.mpc_expert_list)  # uniform distribution initially, 1D array with size = number of experts
@@ -456,7 +467,8 @@ class CrazyflieMPC(rclpy.node.Node):
         if t - self.last_selection_time >= self.selection_interval:
             self.selected_expert_idx = self.adaptive_expert_selection()
             self.last_selection_time = t
-            self.list_of_expert_error_arrays = [] 
+            self.list_of_P_t.append(self.P_t.copy())
+            # self.list_of_expert_error_arrays = [] 
         # SOLVER CALL AT EVERY ITERATION
         status, x_mpc, u_mpc, yref, yref_e = self.mpc_expert_list[self.selected_expert_idx].solve_mpc(x0, target_pose, dt)
     
@@ -509,6 +521,23 @@ class CrazyflieMPC(rclpy.node.Node):
                                     np.degrees(control[1]), 
                                     yawrate, 
                                     thrust_pwm)
+            
+    def save_expert_errors(self):
+        import csv
+        # filename = os.path.expanduser("~/yborden/lab9/expert_errors_std03_lr03_mh5_circle.csv")
+        # with open(filename, "w", newline="") as f:
+        #     writer = csv.writer(f)
+        #     for row in self.list_of_expert_error_arrays:
+        #         writer.writerow(row)
+        # self.get_logger().info(f"Saved expert errors to {filename}")
+
+        filename_probs = os.path.expanduser("~/yborden/lab9/expert_probs_circle.csv")
+        with open(filename_probs, "w", newline="") as f:
+            writer = csv.writer(f)
+            for row in self.list_of_P_t:
+                writer.writerow(row)
+        self.get_logger().info(f"Saved expert probabilities to {filename_probs}")
+
 
 def main():
 
@@ -531,10 +560,18 @@ def main():
     quadrotor_dynamics = QuadrotorSimplified(mass, arm_length, Ixx, Iyy, Izz, tau)
     node = CrazyflieMPC(quad_name, quadrotor_dynamics, mpc_N, mpc_tf, rate)
     
-    # Standard node commands
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    # # Standard node commands
+    # rclpy.spin(node)
+    # node.destroy_node()
+    # rclpy.shutdown()
+
+    try:
+        rclpy.spin(node)
+    finally:
+        # SAVE LOG BEFORE EXITING
+        node.save_expert_errors()
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
    main()
